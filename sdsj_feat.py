@@ -65,9 +65,18 @@ def load_data(filename, datatype='train', cfg={}):
         df, categorical_values = transform_categorical_features(df, model_config['categorical_values'])
     print('Transform categorical done, shape {}'.format(df.shape))
 
+    # drop constant features
+    if datatype == 'train':
+        constant_columns = [
+            col_name
+            for col_name in df.columns
+            if df[col_name].nunique() == 1
+            ]
+        df.drop(constant_columns, axis=1, inplace=True)
+
     # filter columns
     if datatype == 'train':
-        model_config['used_columns'] = [c for c in df.columns if check_column_name(c)]
+        model_config['used_columns'] = [c for c in df.columns if check_column_name(c) or c in categorical_values]
     used_columns = model_config['used_columns']
     print('Used {} columns'.format(len(used_columns)))
 
