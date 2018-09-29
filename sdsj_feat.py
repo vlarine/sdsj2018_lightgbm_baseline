@@ -11,6 +11,7 @@ from sklearn import model_selection
 from utils import transform_datetime_features
 
 ONEHOT_MAX_UNIQUE_VALUES = 20
+BIG_DATASET_SIZE = 500 * 1024 * 1024
 
 def transform_categorical_features(df, categorical_values={}):
     # categorical encoding
@@ -43,30 +44,36 @@ def load_data(filename, datatype='train', cfg={}):
 
     model_config = cfg
     model_config['missing'] = True
+    categorical_values = {}
+    model_config['categorical_values'] = categorical_values
 
     # read dataset
-    df = pd.read_csv(filename, low_memory=False)
+    df = pd.read_csv(filename)
     if datatype == 'train':
         y = df.target
         df = df.drop('target', axis=1)
+        if df.memory_usage().sum() > BIG_DATASET_SIZE:
+            model_config['is_big'] = True
     else:
         y = None
     print('Dataset read, shape {}'.format(df.shape))
 
     # features from datetime
-    df = transform_datetime_features(df)
-    print('Transform datetime done, shape {}'.format(df.shape))
+    if not 'is_big' in model_config:
+        df = transform_datetime_features(df)
+        print('Transform datetime done, shape {}'.format(df.shape))
 
     # categorical encoding
-    if datatype == 'train':
-        df, categorical_values = transform_categorical_features(df)
-        model_config['categorical_values'] = categorical_values
-    else:
-        df, categorical_values = transform_categorical_features(df, model_config['categorical_values'])
-    print('Transform categorical done, shape {}'.format(df.shape))
+    if 'is_big' not in model_config:
+        if datatype == 'train':
+            df, categorical_values = transform_categorical_features(df)
+            model_config['categorical_values'] = categorical_values
+        else:
+            df, categorical_values = transform_categorical_features(df, model_config['categorical_values'])
+        print('Transform categorical done, shape {}'.format(df.shape))
 
     # drop constant features
-    if datatype == 'train':
+    if datatype == 'train' and 'is_big' not in model_config:
         constant_columns = [
             col_name
             for col_name in df.columns
@@ -76,7 +83,17 @@ def load_data(filename, datatype='train', cfg={}):
 
     # filter columns
     if datatype == 'train':
-        model_config['used_columns'] = [c for c in df.columns if check_column_name(c) or c in categorical_values]
+        if 'is_big' in model_config:
+            new_feature_count = min(df.shape[1],
+                                    int(df.shape[1] / (df.memory_usage().sum() / BIG_DATASET_SIZE)))
+            # take only high correlated features
+            correlations = np.abs([
+                np.corrcoef(y, df[col_name])[0, 1]
+                for col_name in df.columns if col_name.startswith('number')
+                ])
+            model_config['used_columns'] = df.columns[np.argsort(correlations)[-new_feature_count:]]
+        else:
+            model_config['used_columns'] = [c for c in df.columns if check_column_name(c) or c in categorical_values]
     used_columns = model_config['used_columns']
     print('Used {} columns'.format(len(used_columns)))
 
